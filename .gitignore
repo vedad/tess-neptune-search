@@ -4,3 +4,6 @@ transit-search/example_data/hlsp_tess-spoc_tess_phot_0000000000021371-s0038_tess
 transit-search/example_data/hlsp_tess-spoc_tess_phot_0000000000021371-s0038_tess_v1_tp/hlsp_tess-spoc_tess_phot_0000000000021371-s0038_tess_v1_tp.fits
 notes.md
 .DS_Store
+transit-search/__pycache__/data.cpython-310.pyc
+.gitignore
+transit-search/__pycache__/star.cpython-310.pyc
