@@ -3,8 +3,8 @@
 import argparse
 import matplotlib.pyplot as plt
 
-from .data import Lightcurve, Pathfinder
-from .star import Star
+from data import Lightcurve, Pathfinder
+from star import Star
 
 
 if __name__ == '__main__':
@@ -37,15 +37,18 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    p = Pathfinder(args.tic, sector=args.sector, data_path=args.data_dir)
+    p = Pathfinder(args.data_dir, tic=args.tic, sector=args.sector)
     lightcurve_files = p.filepaths
+    print('files', lightcurve_files)
     print(f"Found {len(lightcurve_files)} data files for sectors {p.sectors}")
 
     lightcurves = [Lightcurve(x) for x in lightcurve_files]
 
     star = Star(args.tic, lightcurves)
 
-    plt.figure()
-    for i in range(2):
-        plt.errorbar(star.time[i], star.flux[i], yerr=star.flux_err[i], capsize=0, fmt='.')
-    plt.show()
+    res = star.search()
+
+    # plt.figure()
+    # for i in range(2):
+    #     plt.errorbar(star.time[i], star.flux[i], yerr=star.flux_err[i], capsize=0, fmt='.')
+    # plt.show()

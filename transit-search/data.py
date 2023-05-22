@@ -17,6 +17,8 @@ class Pathfinder:
             raise ValueError("`tic` number needs to be specified")
 
         self.data_path = data_path
+        if isinstance(tic, list):
+            tic = tic[0]
         self.tic_id = Pathfinder._create_full_id(tic, 16)
         self.tic = tic
         self.provenance = provenance
@@ -26,7 +28,7 @@ class Pathfinder:
         self.instrument = instrument
 
         if sector is not None:
-            self.sectors = [sector]
+            self.sectors = sector
         else:
             self.sectors = self._get_all_sectors()
 
@@ -75,12 +77,11 @@ class Lightcurve:
     """
     Class for holding the light curve data for a single TESS-SPOC `lightcurve` file
     """
-    def __init__(self, filepath, quality_flag=0):
+    def __init__(self, filepath, **kwargs):
 
-        Lightcurve._read_data(filepath)
+        self._read_data(filepath, **kwargs)
         
-    @staticmethod
-    def _read_data(filepath):
+    def _read_data(self, filepath, quality_flag=0):
         hdu = fits.open(filepath)
 
         self.header = hdu[0].header
