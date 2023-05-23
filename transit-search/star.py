@@ -3,14 +3,14 @@
 import numpy as np
 from astropy.constants import G
 import astropy.units as u
-from transitleastsquares import transitleastsquares
+from transitleastsquares import transitleastsquares, transit_mask
 
 class Star:
     def __init__(self, tic, lightcurves):
 
         self.tic = tic
         self.lc = lightcurves
-        print(self.lc)
+        print(self.tic)
 
         # stellar parameters
         self.teff    = self.lc[0].header["TEFF"] * u.K
@@ -35,15 +35,62 @@ class Star:
         g_cgs = 10**self.logg * u.cm / u.s**2
         return 3 * g_cgs / (4 * np.pi * G_cgs * self.radius.to(u.cm))
     
+    def _create_candidate_id(self, index):
+        return ".".join([self.tic, f"{index:02}"])
+    
     def search(self, method='tls'):
 
-        model = transitleastsquares(self.x, self.y)
-        results = model.power(oversampling_factor=5, duration_grid_step=1.02)
+        def _run_search(x, y):
+             model = transitleastsquares(x, y)
+             return model.power(oversampling_factor=5, duration_grid_step=1.02)
+        
+        results_multi = []
+        results = _run_search(self.x, self.y)
+        
+        # add data
+        results["data_x"] = self.time
+        results["data_y"] = self.flux
 
-        return results
+        # add stellar parameters
+        results["Tmag"] = self.Tmag
+        results["radius"] = self.radius
+        results["teff"] = self.teff
+
+        results["cid"] = self._create_candidate_id(1)
+        print(results["cid"])
+
+        results_multi.append(results)
+
+        current_significance = results["SDE"]
+        iterations = 1
+        m = np.ones_like(self.x, dtype=bool)
+
+        while current_significance > 7:
+            # if previous candidate was significant, search for another signal
+            iterations += 1
+
+            m_tr = transit_mask(self.x, results.period, 2*results.duration, results.T0)
+            m[m_tr] = False
+            results = _run_search(self.x[m], self.y[m])
+
+            # add data
+            results["data_x"] = self.time
+            results["data_y"] = self.flux
+
+            # add stellar parameters
+            results["Tmag"] = self.Tmag
+            results["radius"] = self.radius
+            results["teff"] = self.teff
+
+            results["cid"] = self._create_candidate_id(iterations)
+
+            results_multi.append(results)
+            current_significance = results["SDE"]
+
+            # add a new candidate ID to the new results
+
+
+        return results_multi
 
 if __name__ == "__main__":
     pass
-    # star = Star()
-    # plt.errorbar(lc.time, lc.flux, yerr=lc.flux_err, capsize=0, fmt='.')
-    # plt.show()

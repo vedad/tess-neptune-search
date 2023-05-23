@@ -72,6 +72,14 @@ class Pathfinder:
     def _create_full_id(input, output_length):
         # adds leading zeros to `input` until `output_lenght` is reached
         return f'{int(input):0{output_length}}'
+    
+    def _create_savedir(self, basedir, sde, candidate):
+        sector_ids = [Pathfinder._create_full_id(s, 4) for s in self.sectors]
+        sector_string = "-".join([f"s{x}" for x in sector_ids])
+        return Path(
+            basedir, 
+            f"tls_{self.tic_id}.0{candidate}-{sector_string}_sde={int(np.round(sde))}.pickle"
+            )
 
 class Lightcurve:
     """
@@ -93,7 +101,13 @@ class Lightcurve:
         self.elapsed_time = hdu[1].header["TELAPSE"]
 
         # select data by quality and normalize
-        m = hdu[1].data["QUALITY"] == quality_flag
+        m_quality = hdu[1].data["QUALITY"] == quality_flag
+        m_nan = (
+                np.isnan(hdu[1].data["PDCSAP_FLUX_ERR"]) | 
+                np.isnan(hdu[1].data["PDCSAP_FLUX"]) |
+                np.isnan(hdu[1].data["TIME"])
+        )
+        m = m_quality | ~m_nan
         self.time = hdu[1].data["TIME"][m]
         flux = hdu[1].data["PDCSAP_FLUX"][m]
         

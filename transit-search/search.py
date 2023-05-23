@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import pickle
 import matplotlib.pyplot as plt
 
 from data import Lightcurve, Pathfinder
@@ -29,8 +30,9 @@ if __name__ == '__main__':
                         default="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data")
 
     # save data to file
-    parser.add_argument('--save', type=str, action='store', 
-                        help='path to directory where to save output files')
+    parser.add_argument('--save', type=str, action="store", 
+                        help='path to directory where to save output files',
+                        default="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results")
     parser.add_argument('--overwrite', action='store_true',
                         help='flag to overwrite already existing file')
 
@@ -39,16 +41,19 @@ if __name__ == '__main__':
 
     p = Pathfinder(args.data_dir, tic=args.tic, sector=args.sector)
     lightcurve_files = p.filepaths
-    print('files', lightcurve_files)
     print(f"Found {len(lightcurve_files)} data files for sectors {p.sectors}")
 
     lightcurves = [Lightcurve(x) for x in lightcurve_files]
 
-    star = Star(args.tic, lightcurves)
+    if len(args.tic) < 2:
+        tic = args.tic[0]
+    star = Star(tic, lightcurves)
 
-    res = star.search()
+    results = star.search()
 
-    # plt.figure()
-    # for i in range(2):
-    #     plt.errorbar(star.time[i], star.flux[i], yerr=star.flux_err[i], capsize=0, fmt='.')
-    # plt.show()
+    savedirs = [p._create_savedir(args.save, results[i].SDE, i+1) 
+                for i in range(len(results))]
+
+    for i,savedir in enumerate(savedirs):
+        with open(savedir, "wb") as handle:
+            pickle.dump(results[i], handle)
