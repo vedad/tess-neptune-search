@@ -3,6 +3,32 @@
 from numpy import arccos, sqrt, pi, clip, select, finfo, cos
 from numba import vectorize
 
+import jax
+import jax.numpy as jnp
+
+from tinygp import kernels, GaussianProcess
+
+jax.config.update("jax_enable_x64", True)
+
+
+def build_gp(params):
+    kernel = kernels.quasisep.Matern32(
+                      scale=jnp.exp(params["log_scale"],
+                      sigma=jnp.exp(params["log_sigma"]))
+                      )
+    return GaussianProcess(
+        kernel,
+        params["x"],
+        diag=params["yerr"]**2 + jnp.exp(params["log_jitter"]),
+        # mean=params["mean"],
+    )
+
+
+@jax.jit
+def loss(params):
+    gp = build_gp(params)
+    return -gp.log_probability(params["y"])
+
 class qpower2:
 
     def __call__(self, *args):
