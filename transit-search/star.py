@@ -69,8 +69,8 @@ class Star:
              return model.power(
                 oversampling_factor=5,
                 duration_grid_step=1.02,
-                period_max=15,
-                period_min=0.3,
+                period_max=12,
+                # period_min=0.3,
                 R_star=self.radius.value,
                 M_star=self.mass.value,
                 M_star_max=1.2,

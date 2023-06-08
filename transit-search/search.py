@@ -57,3 +57,10 @@ if __name__ == '__main__':
     for i,savedir in enumerate(savedirs):
         with open(savedir, "wb") as handle:
             pickle.dump(results[i], handle)
+
+
+# questions:
+
+# maximum period to search?
+# search combined light curves (if observed in multiple sectors?) or
+# sector by sector

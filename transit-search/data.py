@@ -7,6 +7,16 @@ import re
 
 __all__ = ["Lightcurve", "Pathfinder"]
 
+# def find_lc(tic, sector=None,
+#             data_path="/Users/u2271802/Data/tess/tess-spoc_ffi",
+#             provenance="tess-spoc", product="hlsp", mission="tess", version="v1", instrument="phot"):
+    
+#     sector_id4 = 
+
+#     return 
+
+
+
 class Pathfinder:
     """
     Class for holding the path to a single TESS-SPOC `lightcurve` file. 
@@ -19,23 +29,31 @@ class Pathfinder:
         self.data_path = data_path
         if isinstance(tic, list):
             tic = tic[0]
-        self.tic_id = Pathfinder._create_full_id(tic, 16)
+        self.tic_id = Pathfinder._create_padded_id(tic, 16)
+        ticid_parts = [self.tic_id[i:i+4] for i in range(0, 16, 4)]
+        self._ticid_parts_path = "/".join(ticid_parts)
         self.tic = tic
         self.provenance = provenance
         self.product = product
         self.mission = mission
         self.version = version
         self.instrument = instrument
+        # self.ffi_dir_name = ffi_dir_name
 
         if sector is not None:
-            self.sectors = sector
+            self.filepaths = [self._get_sector_path(x) for x in sector]
         else:
-            self.sectors = self._get_all_sectors()
+            self.filepaths = self._get_all_filepaths()
 
-        self.filepaths = [self._get_sector_filepath(s) for s in self.sectors]
+        # if sector is not None:
+        #     self.sectors = sector
+        # else:
+        #     self.sectors = self._get_all_sectors()
+
+        # self.filepaths = [self._get_sector_filepath(s) for s in self.sectors]
     
-    def _get_sector_filename(self, sector) -> str:
-        sector_id = Pathfinder._create_full_id(sector, 4)
+    def _get_sector_filename(self, sector):
+        sector_id = Pathfinder._create_padded_id(sector, 4)
         base_filename = (
             f"{self.product}_{self.provenance}_{self.mission}_{self.instrument}_{self.tic_id}-s{sector_id}_{self.mission}_{self.version}"
         )
@@ -43,38 +61,62 @@ class Pathfinder:
         return f"{base_filename}_lc.fits"
 
     def _get_sector_filepath(self, sector):
-        sector_id = Pathfinder._create_full_id(sector, 4)
-        base_filename = (
-            f"{self.product}_{self.provenance}_{self.mission}_{self.instrument}_{self.tic_id}-s{sector_id}_{self.mission}_{self.version}"
-        )
+        # sector_id4 = Pathfinder._create_padded_id(sector, 4)
+
+        # base_filename = (
+            # f"{self.product}_{self.provenance}_{self.mission}_{self.instrument}_{self.tic_id}-s{sector_id4}_{self.mission}_{self.version}"
+        # )
+
+        sector_id = Pathfinder._create_padded_id(sector, 2)
         filename = self._get_sector_filename(sector)
         filepath = Path(
-            self.data_path, "_".join([base_filename, "tp"]), filename
-                        ).as_posix()
+            self.data_path, f"S{sector_id}", "target", 
+            self._ticid_parts_path, filename
+            )
+        # filepath = Path(
+        #     self.data_path, "_".join([base_filename, "tp"]), filename
+        #                 ).as_posix()
 
-        return filepath
+        return filepath.as_posix()
 
     def _get_all_sectors(self):
-        filepaths = sorted(
-            list(
-                Path(self.data_path).glob(
-                    f"*{self.tic_id}*"
-                    )
-                )
-            )
+        # filepaths = sorted(
+        #     list(
+        #         Path(self.data_path).glob(
+        #             f"*{self.tic_id}*"
+        #             )
+        #         )
+        #     )
+
         matches = [
-            re.search("s00[0-9][0-9]", x.name).group() for x in filepaths
+            re.search("s00[0-9][0-9]", Path(x).name).group() for x in self.filepaths
             ]
         sectors = [x.lstrip("s00") for x in matches]
         return sectors
     
+    def _get_all_filepaths_server(self):
+        # "/storage/astro2/phsrmj/TESS/SPOC_30min/Sxx/target"
+
+        p = Path(self.data_path)
+        # ticid_parts = [self.tic_id[i:i+4] for i in range(0, 16, 4)]
+        # ticid_parts_path = "/".join(ticid_parts)
+
+        # search all sector subdirectories matching the 4-part 16-digit TIC
+        matches = list(p.glob(f"SPOC_30min/S*/target/{self._ticid_parts_path}/*lc.fits"))
+
+        # sort files by sector - bit convoluted because want to make sure it is sorted using the sector identifier in the filename and not the base directory structure
+        sorted_idx = np.argsort([x.name for x in matches])
+        filepaths = [matches[i] for i in sorted_idx]
+        
+        return filepaths
+
     @staticmethod
-    def _create_full_id(input, output_length):
+    def _create_padded_id(input, output_length):
         # adds leading zeros to `input` until `output_lenght` is reached
         return f'{int(input):0{output_length}}'
     
     def _create_savedir(self, basedir, sde, candidate):
-        sector_ids = [Pathfinder._create_full_id(s, 4) for s in self.sectors]
+        sector_ids = [Pathfinder._create_padded_id(s, 4) for s in self.sectors]
         sector_string = "-".join([f"s{x}" for x in sector_ids])
         return Path(
             basedir, 

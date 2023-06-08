@@ -11,7 +11,7 @@ import astropy.units as u
 # data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.01-s0001_sde=15.pickle"
 
 # pimen-c 2
-data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.01-s0001_sde=20.pickle"
+data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.02-s0001_sde=5.pickle"
 
 # pimen-c 2
 # data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.01-s0001_sde=15.pickle"
