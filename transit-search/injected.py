@@ -3,11 +3,12 @@
 import numpy as np
 from astropy.io import fits
 import astropy.units as u
+from pathlib import Path
 
 from star import Star
-from data import Lightcurve
+from data import Lightcurve, Pathfinder
 
-__all__ = ["LightcurveInjected", "StarInjected", "_split_injected_lightcurve"]
+__all__ = ["LightcurveInjected", "StarInjected", "_split_injected_lightcurve", "_create_savedir"]
 
 class LightcurveInjected(Lightcurve):
     def _read_data(self, data):
@@ -30,9 +31,10 @@ class LightcurveInjected(Lightcurve):
         # self.flux = flux[m]
 
 class StarInjected(Star):
-    def __init__(self, tic, lightcurves, truth=None):
+    def __init__(self, tic, lightcurves, sim, truth=None):
 
         self.tic = tic
+        self.sim = sim
         self.lc = lightcurves
         self.truth = truth
 
@@ -72,7 +74,10 @@ def _split_injected_lightcurve(filepath):
         seclen = [int(x) for x in hdu[0].header['SECLEN'].split(' ')]
         scc = hdu[0].header['SCC'].split(' ')
 
-        sec_lcs = {"TIC" : str(hdu[0].header["TICID"])}
+        sec_lcs = {"TIC" : str(hdu[0].header["TICID"]),
+                   "SIM" : hdu[0].header["SIM"],
+                   "SCC" : hdu[0].header["SCC"]
+                   }
         s = 0
         e = 0
         for i, length in enumerate(seclen):
@@ -81,3 +86,17 @@ def _split_injected_lightcurve(filepath):
             s += length
 
         return sec_lcs, truth
+
+def _create_savedir(basedir, sde, candidate, tic, sim, scc):
+
+    tic_id = Pathfinder._create_padded_id(tic, 16)
+    sector_string = scc.split()
+    sector_string = [x.split("-")[0] for x in sector_string]
+    sector_string = [x.lstrip("S") for x in sector_string]
+    sector_string = [Pathfinder._create_padded_id(x, 2) for x in sector_string]
+    sector_string = "-".join([f"s{x}" for x in sector_string])
+
+    return Path(
+        basedir, 
+        f"tls_{sim}_{tic}.0{candidate}-{sector_string}_sde={sde:.1f}.pickle"
+        )

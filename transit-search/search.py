@@ -41,10 +41,10 @@ if __name__ == '__main__':
             Multiprocessing threads to use
             """)
     
-    # save data to file
-    parser.add_argument('--mpi', action="store_true", 
-                        help='Flag whether to to use mpi4py to parallelize',
-                        )
+    # # save data to file
+    # parser.add_argument('--mpi', action="store_true", 
+    #                     help='Flag whether to to use mpi4py to parallelize',
+    #                     )
 
     parser.add_argument('--sector', nargs='+', type=int, default=None,
                         help='which sectors to show')
@@ -57,7 +57,8 @@ if __name__ == '__main__':
     # save data to file
     parser.add_argument('--save', type=str, action="store", 
                         help='path to directory where to save output files',
-                        default="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results")
+                        default="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results"
+                        )
     parser.add_argument('--overwrite', action='store_true',
                         help='flag to overwrite already existing file')
 
@@ -73,8 +74,6 @@ if __name__ == '__main__':
         tic = args.tic
     elif args.target_list is not None and not args.injected:
         tic = np.loadtxt(args.target_list, format=str)
-
-
 
     if args.injected:
         lightcurve_files = np.loadtxt(args.target_list, dtype=str)
@@ -95,23 +94,25 @@ if __name__ == '__main__':
                 # print(f"Task number {i} ({f}) is being done by processor {rank} of {size}")
 
                 data, truth = _split_injected_lightcurve(f)
-                _tic = data["TIC"]
+                _tic, _sim, _scc = data["TIC"], data["SIM"], data["SCC"]
                 data.pop("TIC")
+                data.pop("SIM")
+                data.pop("SCC")
                 lightcurves = [LightcurveInjected(d) for d in data.items()]
-                star = StarInjected(_tic, lightcurves)
+                star = StarInjected(_tic, lightcurves, _sim)
                 results = star.search(use_threads=args.threads,
                                       truth=truth,
                                       verbose=False,
                                       show_progress_bar=False)
+                
+                savedirs = [_create_savedir(args.save, results[i].SDE, i+1, _tic, _sim, _scc) 
+                    for i in range(len(results))]
+
+                for i,savedir in enumerate(savedirs):
+                    with open(savedir, "wb") as handle:
+                        pickle.dump(results[i], handle)
 
                 pbar.update()
-
-            # savedirs = [p._create_savedir(args.save, results[i].SDE, i+1) 
-            #     for i in range(len(results))]
-
-            # for i,savedir in enumerate(savedirs):
-            #     with open(savedir, "wb") as handle:
-            #         pickle.dump(results[i], handle)
     else:
         for _tic in tic:
             p = Pathfinder(tic=_tic,
@@ -120,6 +121,13 @@ if __name__ == '__main__':
             lightcurves = [Lightcurve(x) for x in lightcurve_files]
             star = Star(_tic, lightcurves)
             results = star.search()
+
+            # savedirs = [p._create_savedir(args.save, results[i].SDE, i+1) 
+                    # for i in range(len(results))]
+
+            # for i,savedir in enumerate(savedirs):
+                # with open(savedir, "wb") as handle:
+                    # pickle.dump(results[i], handle)
 
 
 

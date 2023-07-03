@@ -119,7 +119,7 @@ class Pathfinder:
         sector_string = "-".join([f"s{x}" for x in sector_ids])
         return Path(
             basedir, 
-            f"tls_{self.tic_id}.0{candidate}-{sector_string}_sde={int(np.round(sde))}.pickle"
+            f"tls_{self.tic_id}.0{candidate}-{sector_string}_sde={sde:.1f}.pickle"
             )
 
 class Lightcurve:

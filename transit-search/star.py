@@ -123,6 +123,7 @@ class Star:
             results["detrending"] = trend
 
             if truth is not None:
+                results["sim"] = self.sim
                 results["period_true"] = truth["period"]
                 results["t0_true"] = truth["t0"]
                 results["duration_true"] = truth["duration"]
