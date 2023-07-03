@@ -12,7 +12,6 @@ class Star:
 
         self.tic = tic
         self.lc = lightcurves
-        print(self.tic)
 
         # stellar parameters
         self.teff    = self.lc[0].header["TEFF"] * u.K
@@ -23,6 +22,7 @@ class Star:
         self.rho     = self._calculate_stellar_density()
         self.mass    = self._calculate_stellar_mass()
 
+        # combined data across all sectors
         self.time = [x.time for x in self.lc]
         self.flux = [x.flux for x in self.lc]
         self.flux_err = [x.flux_err for x in self.lc]
@@ -43,7 +43,7 @@ class Star:
         R_cgs = self.radius.to(u.cm)
         g_cgs = 10**self.logg * u.cm / u.s**2
         return (g_cgs * R_cgs**2 / G_cgs).to(u.M_sun)
-    
+     
     def _create_candidate_id(self, index):
         return ".".join([self.tic, f"{index:02}"])
     
@@ -58,7 +58,7 @@ class Star:
 
         return y.data, trend, ~y.mask
     
-    def search(self, method='tls', window_size=51, **kwargs):
+    def search(self, method='tls', window_size=51, truth=None, **kwargs):
 
         y, trend, m = self.detrend_data(self.y, window_size)
         x = self.x
@@ -73,7 +73,7 @@ class Star:
                 # period_min=0.3,
                 R_star=self.radius.value,
                 M_star=self.mass.value,
-                M_star_max=1.2,
+                M_star_max=1.5,
                 **kwargs
                 )
         
@@ -122,6 +122,12 @@ class Star:
             results["mask"] = m
             results["detrending"] = trend
 
+            if truth is not None:
+                results["period_true"] = truth["period"]
+                results["t0_true"] = truth["t0"]
+                results["duration_true"] = truth["duration"]
+                results["depth_true"] = truth["depth"]
+
             # add stellar parameters
             results["Tmag"] = self.Tmag
             results["radius"] = self.radius
@@ -134,8 +140,4 @@ class Star:
 
             # add a new candidate ID to the new results
 
-
         return results_multi
-
-if __name__ == "__main__":
-    pass

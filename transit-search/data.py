@@ -5,30 +5,28 @@ from astropy.io import fits
 import numpy as np
 import re
 
-__all__ = ["Lightcurve", "Pathfinder"]
+# __all__ = [
+#     "Lightcurve", "LightcurveInjected", "Pathfinder", "_split_injected_lightcurve"
+#     ]
 
-# def find_lc(tic, sector=None,
-#             data_path="/Users/u2271802/Data/tess/tess-spoc_ffi",
-#             provenance="tess-spoc", product="hlsp", mission="tess", version="v1", instrument="phot"):
-    
-#     sector_id4 = 
-
-#     return 
-
-
+__all__ = [
+    "Lightcurve", "Pathfinder"
+    ]
 
 class Pathfinder:
     """
     Class for holding the path to a single TESS-SPOC `lightcurve` file. 
     """
-    def __init__(self, data_path, tic=None, sector=None, provenance="tess-spoc", product="hlsp", mission="tess", version="v1", instrument="phot"):
+    def __init__(self, tic=None, sector=None, provenance="tess-spoc", product="hlsp", mission="tess", version="v1", instrument="phot", data_path="/Users/u2271802/Data/tess/tess-spoc_ffi"):
 
         if tic is None:
             raise ValueError("`tic` number needs to be specified")
 
         self.data_path = data_path
-        if isinstance(tic, list):
-            tic = tic[0]
+        # if isinstance(tic, list):
+            # tic = tic[0]
+            
+        # needed for file/directory structure
         self.tic_id = Pathfinder._create_padded_id(tic, 16)
         ticid_parts = [self.tic_id[i:i+4] for i in range(0, 16, 4)]
         self._ticid_parts_path = "/".join(ticid_parts)
@@ -38,12 +36,13 @@ class Pathfinder:
         self.mission = mission
         self.version = version
         self.instrument = instrument
-        # self.ffi_dir_name = ffi_dir_name
 
         if sector is not None:
-            self.filepaths = [self._get_sector_path(x) for x in sector]
+            self.filepaths = [self._get_sector_filepath(x) for x in sector]
         else:
             self.filepaths = self._get_all_filepaths()
+
+        self.sectors = self._get_all_sectors()
 
         # if sector is not None:
         #     self.sectors = sector
@@ -94,7 +93,7 @@ class Pathfinder:
         sectors = [x.lstrip("s00") for x in matches]
         return sectors
     
-    def _get_all_filepaths_server(self):
+    def _get_all_filepaths(self):
         # "/storage/astro2/phsrmj/TESS/SPOC_30min/Sxx/target"
 
         p = Path(self.data_path)
@@ -102,11 +101,11 @@ class Pathfinder:
         # ticid_parts_path = "/".join(ticid_parts)
 
         # search all sector subdirectories matching the 4-part 16-digit TIC
-        matches = list(p.glob(f"SPOC_30min/S*/target/{self._ticid_parts_path}/*lc.fits"))
+        matches = list(p.glob(f"S*/target/{self._ticid_parts_path}/*lc.fits"))
 
         # sort files by sector - bit convoluted because want to make sure it is sorted using the sector identifier in the filename and not the base directory structure
         sorted_idx = np.argsort([x.name for x in matches])
-        filepaths = [matches[i] for i in sorted_idx]
+        filepaths = [matches[i].as_posix() for i in sorted_idx]
         
         return filepaths
 
@@ -128,7 +127,6 @@ class Lightcurve:
     Class for holding the light curve data for a single TESS-SPOC `lightcurve` file
     """
     def __init__(self, filepath, **kwargs):
-
         self._read_data(filepath, **kwargs)
         
     def _read_data(self, filepath, quality_flag=0):
@@ -145,29 +143,33 @@ class Lightcurve:
         # select data by quality and normalize
         m_quality = hdu[1].data["QUALITY"] == quality_flag
         m_nan = (
-                np.isnan(hdu[1].data["PDCSAP_FLUX_ERR"]) | 
-                np.isnan(hdu[1].data["PDCSAP_FLUX"]) |
-                np.isnan(hdu[1].data["TIME"])
+                np.isfinite(hdu[1].data["PDCSAP_FLUX_ERR"]) &
+                np.isfinite(hdu[1].data["PDCSAP_FLUX"]) &
+                np.isfinite(hdu[1].data["TIME"])
         )
-        m = m_quality | ~m_nan
+        m_zero = (np.isclose(hdu[1].data["PDCSAP_FLUX_ERR"], 0) |
+                  np.isclose(hdu[1].data["PDCSAP_FLUX"], 0)
+        )
+        m = m_quality & m_nan & ~m_zero
         self.time = hdu[1].data["TIME"][m]
         flux = hdu[1].data["PDCSAP_FLUX"][m]
-        
+
         self.flux_err = hdu[1].data["PDCSAP_FLUX_ERR"][m] / np.median(flux)
         self.flux = flux / np.median(flux)
 
 if __name__ == "__main__":
 
-    import matplotlib.pyplot as plt
+    pass
+    # import matplotlib.pyplot as plt
 
-    data_dir = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data"
+    # data_dir = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data"
 
     # lcpath = _get_filepath(data_dir, tic=21371, sector=11)
 
-    lc = Pathfinder(data_dir, tic=21371)
-    print(lc.tic_id)
-    print(lc.sectors)
-    print(lc.filepaths)
+    # lc = Pathfinder(data_dir, tic=21371)
+    # print(lc.tic_id)
+    # print(lc.sectors)
+    # print(lc.filepaths)
 
     # plt.errorbar(lc.time, lc.flux, yerr=lc.flux_err, capsize=0, fmt='.')
-    plt.show()
+    # plt.show()

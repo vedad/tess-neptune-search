@@ -8,3 +8,5 @@ notes.md
 *.pyc
 *.pickle
 *.pdf
+transit-search/injection/
+hlsp*
