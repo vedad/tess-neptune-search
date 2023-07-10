@@ -5,7 +5,9 @@ from astropy.constants import G
 from astropy.stats import sigma_clip
 import astropy.units as u
 from transitleastsquares import transitleastsquares, transit_mask
-from scipy.signal import medfilt, savgol_filter
+from wotan import flatten
+# from scipy.signal import medfilt, savgol_filter
+# import wotan
 
 class Star:
     def __init__(self, tic, lightcurves):
@@ -21,6 +23,7 @@ class Star:
         self.Tmag    = self.lc[0].header["TESSMAG"]
         self.rho     = self._calculate_stellar_density()
         self.mass    = self._calculate_stellar_mass()
+        print('star mass', self.mass)
 
         # combined data across all sectors
         self.time = [x.time for x in self.lc]
@@ -47,34 +50,64 @@ class Star:
     def _create_candidate_id(self, index):
         return ".".join([self.tic, f"{index:02}"])
     
-    def detrend_data(self, y, window_size, filter="savgol"):
+    def detrend_data(self, x, y, **kwargs):
 
-        if filter == "savgol":
-            trend = savgol_filter(y, window_length=window_size, polyorder=3)
-        elif filter == "medfilt":
-            trend = medfilt(y, kernel_size=window_size)
-        y = y / trend
-        y = sigma_clip(y, sigma_upper=3, sigma_lower=float('inf'), maxiters=1)
+        # # parameter stuff
+        # if edge_cutoff is None:
+        #     edge_cutoff = 0.5 * window_length
 
-        return y.data, trend, ~y.mask
+        # break_tolerance explicitly set for ``pspline`` method since it cannot be a function of ``window_length`` (the parameter is not used for this method)
+        # if method == "pspline" and break_tolerance is None:
+        #     break_tolerance = 0.5
+
+        # _kwargs = dict(
+        #     method = method,
+        #     window_length = window_length,
+        #     cval = cval,
+        #     break_tolerance = break_tolerance,
+        #     edge_cutoff = edge_cutoff,
+        # )
+
+        flatten_y, trend = flatten(x, y, **kwargs)
+
+        # if method == "biweight":
+        #     flatten_y, trend_y = flatten(x, y, **_kwargs)
+        # elif method == "pspline":
+        #     _kwargs = _validate_kwargs(_kwargs)
+        #     _kwargs["max_splines"] = 1000
+        #     _kwargs["stdev_cut"] = 2
+        #     _kwargs.pop("window_length")
+        #     _kwargs.pop("cval")
+        #     flatten_y, trend_y = flatten(x, y, method="pspline", **_kwargs)
+
+        return flatten_y, trend
     
-    def search(self, method='tls', window_size=51, truth=None, **kwargs):
+    # def _validate_tls_kwargs(d):
+            
+    #         for key,val in d.iteritems():
+    #             if key not in d:
+    #                 d[key] = val
+    #         return d
+    
+    def search(self, wotan_kwargs=None, tls_kwargs=None, truth=None):
 
-        y, trend, m = self.detrend_data(self.y, window_size)
+
+
+        # y, trend, m = self.detrend_data(self.y, window_size)
+        y, trend = self.detrend_data(self.x, self.y, **wotan_kwargs)
+        m = np.isfinite(y)
+        # m = np.ones_like(y, dtype=bool)
         x = self.x
         # data_span = self.x.max() - self.x.min()
 
         def _run_search(x, y):
              model = transitleastsquares(x, y)
              return model.power(
-                oversampling_factor=5,
-                duration_grid_step=1.02,
-                period_max=12,
                 # period_min=0.3,
                 R_star=self.radius.value,
                 M_star=self.mass.value,
-                M_star_max=1.5,
-                **kwargs
+                # M_star_max=1.5,
+                **tls_kwargs
                 )
         
         results_multi = []
@@ -83,7 +116,7 @@ class Star:
         # add data: adding sector only, beware
         results["data_x"] = self.time
         results["data_y"] = self.flux
-        results["mask"] = m
+        # results["mask"] = m
         results["detrending"] = trend
 
         # add stellar parameters

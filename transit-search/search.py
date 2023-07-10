@@ -6,10 +6,12 @@ import matplotlib.pyplot as plt
 import os
 from tqdm import tqdm
 import mpi4py.MPI
+from pathlib import Path
 
 from data import *
 from star import *
 from injected import *
+from validate import validate_wotan_args
 
 
 if __name__ == '__main__':
@@ -61,9 +63,51 @@ if __name__ == '__main__':
                         )
     parser.add_argument('--overwrite', action='store_true',
                         help='flag to overwrite already existing file')
-
+    
+    # TLS args
+    parser.add_argument("--oversampling", type=int, default=5,
+                        help="""
+            Factor to oversample period grid
+            """)
+    parser.add_argument("--duration-step", type=float, default=1.05,
+                        help="""
+            Duration grid step of transit search
+            """)
+    parser.add_argument("--period-max", type=float, default=11,
+                        help="""
+            Maximum period to search
+            """)
+    parser.add_argument("--verbose", action="store_true",
+                        help="""
+            Show progress
+            """)
+    parser.add_argument("--show-progress-bar", action="store_true",
+                        help="""
+            Show progress
+            """)
+    
+    # Wotan args
+    parser.add_argument("--window-length", type=float, default=0.5,
+                        help="""
+            Sliding window size for detrending
+            """)
+    parser.add_argument("--detrending-method", type=str, default="biweight",
+                        help="""
+            ``Wotan`` method to use for detrending the light curve
+            """)
 
     args = parser.parse_args()
+
+    wotan_kwargs = validate_wotan_args(
+                        window_length=args.window_length,
+                        method = args.detrending_method
+                        )
+    tls_kwargs = dict(oversampling_factor = args.oversampling,
+                      duration_grid_step = args.duration_step,
+                      period_max = args.period_max,
+                      use_threads = args.threads,
+                      verbose = args.verbose,
+                      show_progress_bar = args.show_progress_bar)
 
     if (args.target_list is None 
         # and args.target_list_path is None 
@@ -85,49 +129,60 @@ if __name__ == '__main__':
         rank = mpi4py.MPI.COMM_WORLD.Get_rank()
         size = mpi4py.MPI.COMM_WORLD.Get_size()
 
+        # rudimentary progress bar (per target)
+        
         with tqdm(total=len(lightcurve_files)) as pbar:
             for i,f in enumerate(lightcurve_files):
-        # for i,f in enumerate(lightcurve_files):
 
-                if i%size!=rank: continue
-
-                # print(f"Task number {i} ({f}) is being done by processor {rank} of {size}")
+                if i % size != rank:
+                    continue
 
                 data, truth = _split_injected_lightcurve(f)
                 _tic, _sim, _scc = data["TIC"], data["SIM"], data["SCC"]
                 data.pop("TIC")
                 data.pop("SIM")
                 data.pop("SCC")
+
+                # skip it file exists
+                file_pattern = Path(args.save).glob(f"*{_sim}*{_tic}*.pickle")
+                file_pattern_exists = len(list(file_pattern)) > 0
+                if file_pattern_exists:
+                    print(f"skipped {_tic}, results found")
+                    pbar.update()
+                    continue
+
                 lightcurves = [LightcurveInjected(d) for d in data.items()]
                 star = StarInjected(_tic, lightcurves, _sim)
-                results = star.search(use_threads=args.threads,
-                                      truth=truth,
-                                      verbose=False,
-                                      show_progress_bar=False)
-                
-                savedirs = [_create_savedir(args.save, results[i].SDE, i+1, _tic, _sim, _scc) 
+                results = star.search(truth=truth, tls_kwargs=tls_kwargs, wotan_kwargs=wotan_kwargs)
+                savedirs = [_create_savedir(args.save, results[i].SDE, i+1, _tic, _sim, _scc)
                     for i in range(len(results))]
 
                 for i,savedir in enumerate(savedirs):
                     with open(savedir, "wb") as handle:
                         pickle.dump(results[i], handle)
 
-                pbar.update()
+                pbar.update(1)
     else:
+
+        # copy directory structure for data into results
+        # https://stackoverflow.com/questions/4073969/copy-folder-structure-without-files-from-one-location-to-another
         for _tic in tic:
             p = Pathfinder(tic=_tic,
                 sector=args.sector, data_path=args.data_dir)
             lightcurve_files = p.filepaths
             lightcurves = [Lightcurve(x) for x in lightcurve_files]
             star = Star(_tic, lightcurves)
-            results = star.search()
+            results = star.search(
+                    tls_kwargs=tls_kwargs,
+                    wotan_kwargs=wotan_kwargs
+                                  )
 
-            # savedirs = [p._create_savedir(args.save, results[i].SDE, i+1) 
-                    # for i in range(len(results))]
+            savedirs = [p._create_savedir2(args.save, results[i].SDE, i+1) 
+                    for i in range(len(results))]
 
-            # for i,savedir in enumerate(savedirs):
-                # with open(savedir, "wb") as handle:
-                    # pickle.dump(results[i], handle)
+            for i,savedir in enumerate(savedirs):
+                with open(savedir, "wb") as handle:
+                    pickle.dump(results[i], handle)
 
 
 

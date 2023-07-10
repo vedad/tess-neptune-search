@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 import astropy.units as u
+from pathlib import Path
+import argparse
 
 # data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000000021371.01-s0011_sde=5.pickle"
 
@@ -11,15 +13,12 @@ import astropy.units as u
 # data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.01-s0001_sde=15.pickle"
 
 # pimen-c 2
-data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.02-s0001_sde=5.pickle"
+# data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.02-s0001_sde=5.pickle"
 
 # pimen-c 2
 # data_file = "/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results/tls_0000000261136679.01-s0001_sde=15.pickle"
 
-with open(data_file, 'rb') as handle:
-    res = pickle.load(handle)
 
-print(res["duration"])
 def plot_periodogram(results, ax):
     ax.axvline(results.period, alpha=0.2, lw=3)
     ax.set_xlim(np.min(results.periods), np.max(results.periods))
@@ -74,7 +73,6 @@ def plot_model(results, ax):
     ax.set_xlim(X.min()-1, X.max()+1)
     ax.set_xlabel('time (TJD)')
     ax.set_ylabel('flux')
-
 
     ax.plot(results.model_lightcurve_time, results.model_lightcurve_model,
             "C1", lw=2)
@@ -221,9 +219,63 @@ def plot_sheet(results, savedir=None):
     ax["D"] = plot_periodogram(results, ax["D"])
 
     if savedir is not None:
-        savedir += f"/{results.cid}_SDE={int(np.round(results.SDE)):.0f}.pdf"
+        savedir = _filepath(results, savedir)
+        # savedir += f"/{results.cid}_SDE={int(np.round(results.SDE)):.0f}.pdf"
         fig.savefig(savedir, bbox_inches="tight")
 
+def _filepath(results, savedir):
+    savedir = Path(savedir,
+                   f"{results.cid}_sde={np.round(results.SDE):.1f}.pdf"
+                   )
+    return savedir
 
-fig4 = plot_sheet(res, savedir="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_sheets")
-plt.show()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="""
+                                     Run a transit search on TESS-SPOC light curves
+                                     """)
+
+    parser.add_argument("--tic", nargs='+', type=str, default=[],
+                        help="""
+            The TIC ID of a star to search. Will fetch the correct data located in `--data-dir`
+            """)
+    
+    parser.add_argument("--target-list", type=str, default=None,
+                        help="""
+            Path to a file containing TIC IDs, one per line
+            """)
+ 
+
+    # save data to file
+    parser.add_argument('--save', type=str, action="store", 
+                        help='path to directory where to save output files',
+                        default="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_results"
+                        )
+    parser.add_argument('--overwrite', action='store_true',
+                        help='flag to overwrite already existing file')
+    
+    args = parser.parse_args()
+
+    # if (args.target_list is None 
+    #     # and args.target_list_path is None 
+    #     and len(args.tic) == 0
+    # ):
+    #     raise ValueError("Target(s) must be specified by `--tic`, `--target-list` or `--target-list-path")
+    # elif len(args.tic) > 0:
+    #     tic = args.tic
+    # elif args.target_list is not None and not args.injected:
+    #     tic = np.loadtxt(args.target_list, format=str)
+
+filepaths = Path(args.save).glob("**/*.pickle")
+for f in filepaths:
+    with open(f, 'rb') as handle:
+        res = pickle.load(handle)
+    savedir = f.parent
+    filepath = _filepath(res, savedir)
+    if not filepath.is_file():
+        plot_sheet(res, savedir=savedir)
+
+ 
+
+
+# fig4 = plot_sheet(res, savedir="/Users/u2271802/Astronomy/projects/neptunes/tess-neptune-search/transit-search/example_data_sheets")
+# plt.show()

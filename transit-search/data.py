@@ -114,6 +114,15 @@ class Pathfinder:
         # adds leading zeros to `input` until `output_lenght` is reached
         return f'{int(input):0{output_length}}'
     
+    def _create_savedir2(self, basedir, sde, candidate):
+        sector_ids = [Pathfinder._create_padded_id(s, 4) for s in self.sectors]
+        sector_string = "-".join([f"s{x}" for x in sector_ids])
+        return Path(
+            basedir,
+            self._ticid_parts_path,
+            f"tls_{self.tic_id}.0{candidate}-{sector_string}_sde={sde:.1f}.pickle"
+            )
+    
     def _create_savedir(self, basedir, sde, candidate):
         sector_ids = [Pathfinder._create_padded_id(s, 4) for s in self.sectors]
         sector_string = "-".join([f"s{x}" for x in sector_ids])
