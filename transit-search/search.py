@@ -107,7 +107,8 @@ if __name__ == '__main__':
                       period_max = args.period_max,
                       use_threads = args.threads,
                       verbose = args.verbose,
-                      show_progress_bar = args.show_progress_bar)
+                      show_progress_bar = args.show_progress_bar,
+                      m_star_max=1.6)
 
     if (args.target_list is None 
         # and args.target_list_path is None 
@@ -153,7 +154,11 @@ if __name__ == '__main__':
 
                 lightcurves = [LightcurveInjected(d) for d in data.items()]
                 star = StarInjected(_tic, lightcurves, _sim)
-                results = star.search(truth=truth, tls_kwargs=tls_kwargs, wotan_kwargs=wotan_kwargs)
+                try:
+                    results = star.search(truth=truth, tls_kwargs=tls_kwargs, wotan_kwargs=wotan_kwargs)
+                except ValueError:
+                    print(f"skipped {f} due to ValueError")
+                    continue
                 savedirs = [_create_savedir(args.save, results[i].SDE, i+1, _tic, _sim, _scc)
                     for i in range(len(results))]
 
