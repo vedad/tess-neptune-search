@@ -24,6 +24,7 @@ class Star:
         self.rho     = self._calculate_stellar_density()
         self.mass    = self._calculate_stellar_mass()
         print('star mass', self.mass)
+        print('star radius', self.radius)
 
         # combined data across all sectors
         self.time = [x.time for x in self.lc]
@@ -33,6 +34,7 @@ class Star:
         self.x = np.concatenate(self.time)
         self.y = np.concatenate(self.flux)
         self.y_err = np.concatenate(self.flux_err)
+        print('span', self.x[-1] - self.x[0])
 
 
     def _calculate_stellar_density(self):
