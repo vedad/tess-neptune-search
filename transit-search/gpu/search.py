@@ -1,21 +1,26 @@
 #!/usr/bin/env python
 
 import numpy as np
-import time, datetime, argparse, logging
-import dill as pickle
+import time, datetime, argparse, pickle
 from pathlib import Path
 from wotan import flatten
 from tqdm import tqdm
-import logging
-# import cuvarbase.bls as bls
+from scipy.signal import find_peaks
+from astropy.timeseries import BoxLeastSquares
+
 
 from data import *
 from validate import *
-from stats import spectra, period_uncertainty
+from stats import *#spectra, period_uncertainty, estimate_trend, find_top_peaks, compute_SDE
 from grid import frequency_grid
+from loggers import get_logger
 
 if __name__ == '__main__':
 
+    GPU = True
+
+    if GPU:
+        import cuvarbase.bls as bls
 
     parser = argparse.ArgumentParser(description="""
                                      Run a transit search on TESS-SPOC light curves
@@ -25,30 +30,50 @@ if __name__ == '__main__':
                         help="""
             The path to a file with an injected transit signal
             """)
-    
+
     parser.add_argument("--target-list", type=str, default=None,
                         help="""
             Path to a file containing TIC IDs, one per line
             """)
-    
-    # BLS args
-    parser.add_argument("--q_min", type=float, default=3e-3,
+
+    parser.add_argument("--index-file", type=str, default=None,
                         help="""
-            Minimum transit phase duration (dur/period) to search
+            Path to a file containing TIC IDs and the sectors it was observed in
             """)
-    parser.add_argument("--q_max", type=float, default=0.15,
+    parser.add_argument("--data-dir", type=str, default=None,
                         help="""
-            Maximum transit phase duration (dur/period) to search
+            Path to directory containing all TESS LC files
+            """)
+    parser.add_argument("--inverted", action="store_true",
+                        help="""
+            Flag to invert light curves
+            """)
+    # BLS args
+    # parser.add_argument("--qmin_fac", type=float, default=3e-3,
+    #                     help="""
+    #         Minimum transit phase duration (dur/period) to search
+    #         """)
+    # parser.add_argument("--qmax_fac", type=float, default=0.15,
+    #                     help="""
+    #         Maximum transit phase duration (dur/period) to search
+    #         """)
+    parser.add_argument("--qmin-fac", type=float, default=0.5,
+                        help="""
+            Lower transit phase duration factor compared to Keplerian assumption
+            """)
+    parser.add_argument("--qmax-fac", type=float, default=2,
+                        help="""
+            Upper transit phase duration factor compared to Keplerian assumption
             """)
     parser.add_argument("--dlogq", type=float, default=0.05,
                         help="""
             Logarithmic spacing of the transit phase duration
             """)
-    parser.add_argument("--period_min", type=float, default=0.5,
+    parser.add_argument("--period-min", type=float, default=0.5,
                         help="""
             Maximum period to search
             """)
-    parser.add_argument("--period_max", type=float, default=12,
+    parser.add_argument("--period-max", type=float, default=12,
                         help="""
             Maximum period to search
             """)
@@ -66,7 +91,7 @@ if __name__ == '__main__':
                         help="""
             ``Wotan`` method to use for detrending the light curve
             """)
-    
+
     # save data to file
     parser.add_argument('--save', type=str, action="store", 
                         help='path to directory where to save output files',
@@ -80,18 +105,16 @@ if __name__ == '__main__':
     if args.save is not None:
         do_logging = True
 
-        # Create and configure logger
-        logging.basicConfig(filename=Path(args.save, "LOG"),
-                            format='%(asctime)s|%(message)s',
-                            filemode='w')
-
-        # Creating an object
-        logger = logging.getLogger()
-
-        # Setting the threshold of logger to DEBUG
-        logger.setLevel(logging.DEBUG)
-
-
+        logger_log = get_logger(
+                            name="LOG",
+                            filename=Path(args.save, "LOG"),
+                            )
+        logger_sde = get_logger(
+                            name="SDE",
+                            filename=Path(args.save, "SDE"),
+                            format="%(message)s",
+                            level="INFO",
+                            )
 
     wotan_kwargs = validate_wotan_args(
                         window_length=args.window_length,
@@ -99,134 +122,228 @@ if __name__ == '__main__':
                         )
     
     search_params = validate_search_args(
-                    qmin=args.q_min,
-                    qmax=args.q_max,
+                    qmin_fac=args.qmin_fac,
+                    qmax_fac=args.qmax_fac,
                     dlogq=args.dlogq,
-                    ignore_negative_delta_sols=True
+                    ignore_negative_delta_sols=True,
+                    functions=bls.compile_bls()
                     )
-    
-    lightcurve_files = np.loadtxt(args.target_list, dtype=str)
 
-    # N = len(lightcurve_files)
-    N = 3
+    if args.index_file is None:
+        lightcurve_files = np.loadtxt(args.target_list, dtype=str)
+        N = len(lightcurve_files)
+    else:
+        # if spoc-ffi list then these are tic numbers, not filepaths as above
+        tic = np.loadtxt(args.target_list, dtype=str)
+        N = len(tic)
+        with open(args.index_file, "rb") as handle:
+            index_file = pickle.load(handle)
 
     start = time.time()
+    success = 0
+    fail = 0
 
-    for i in tqdm(range(N)):
+    for i in range(N):
 
+        # if running on injected data
         try:
-            data, _ = _split_injected_lightcurve(lightcurve_files[i])
-
-            _tic, _sim, _scc = data["TIC"], data["SIM"], data["SCC"]
-            data.pop("TIC")
-            data.pop("SIM")
-            data.pop("SCC")
-
+            if args.index_file is None:
+                data, truth = _split_injected_lightcurve(lightcurve_files[i])
+                _tic, _sim, _scc = data["TIC"], data["SIM"], data["SCC"]
+                data.pop("TIC")
+                data.pop("SIM")
+                data.pop("SCC")
+            else:
+                _tic = tic[i]
+                filenames = (
+                    _create_lightcurve_filenames(
+                        _tic,
+                        index_file[_tic]
+                    )
+                )
+                lightcurve_files = (
+                    [Path(args.data_dir, x).as_posix() for x in filenames]
+                )
+                lightcurves = [Lightcurve(x) for x in lightcurve_files]
+        except TypeError as err: # catch "buffer is too small for requested array" error when reading corrupted files
+            if do_logging:
+                logger_log.error(err)
+                logger_sde.info(f"{_tic},-1")
+            fail += 1
+            continue
         except FileNotFoundError as err:
             if do_logging:
-                logger.error(err)
+                logger_log.error(err)
+                logger_sde.info(f"{_tic},-1")
+            fail += 1
+            continue
+        except PermissionError as err:
+            if do_logging:
+                logger_log.error(err)
+                logger_sde.info(f"{_tic},-1")
+            fail += 1
             continue
 
         try:
+            if args.index_file is None:
+                lightcurves = [LightcurveInjected(d) for d in data.items()]
+                star = StarInjected(_tic, lightcurves, _sim)
+                yerr = np.ones_like(star.y)
+            else:
+                star = Star(_tic, lightcurves)
+                yerr = star.y_err
 
-            lightcurves = [LightcurveInjected(d) for d in data.items()]
-            star = StarInjected(_tic, lightcurves, _sim)
+            try:
+                y, trend = flatten(star.x, star.y, **wotan_kwargs)
+            except ValueError:
+                flag = -4
+                raise
 
-            y, trend = flatten(star.x, star.y, **wotan_kwargs)
             m = np.isfinite(y)
-            x, y, yerr = star.x[m], y[m], np.ones_like(y[m])
+            x, y, yerr = star.x[m], y[m], yerr[m]
 
-            # frequency_grid_kwargs = dict(
-            #     R_star = star.radius.value,
-            #     M_star = star.mass.value,
-            #     time_span = x.max() - x.min(),
-            #     period_min = args.period_min,
-            #     period_max = args.period_max,
-            #     oversampling_factor = args.oversampling
-            # )
+            # invert light curve
+            if args.inverted:
+                diff = y - 1
+                y -= 2*diff
 
-            freqs, frequency_grid_args = frequency_grid(
+            try:
+                freqs, frequency_grid_args, flag = frequency_grid(
                                 star.radius.value,
                                 star.mass.value,
                                 np.max(x) - np.min(x),
-                                period_min=args.period_min,
-                                period_max=args.period_max,
-                                oversampling_factor=args.oversampling
+                                period_min = args.period_min,
+                                period_max = args.period_max,
+                                oversampling_factor = args.oversampling
                                 )
+            except ValueError:
+                flag = -1
+                raise
+            
+            if flag != 0:
+                raise
 
+            if GPU:
+                _, bls_power = bls.eebls_transit_gpu(
+                    x, y, yerr, freqs=freqs, use_fast=True, **search_params
+                    )
+            else:
+                bls_power = np.ones_like(freqs)
 
-            # bls_power = bls.eebls_transit_gpu(x, y, yerr, freqs, fast=True,
-                                        # **search_params)
-            bls_power = np.ones_like(freqs)
             message = f"TIC {_tic:<12} ----- PERIODOGRAM COMPLETE"
-            
-            # save power
-            # if args.save is not None:
-            #     savedir = _create_savedir(
-            #         args.save, 1, _tic, _sim, _scc, prefix="bls_power"
-            #         )
-            #     freq_power = np.array(
-            #         list(
-            #             zip(freqs, bls_power)
-            #         ), dtype=[('frequency', '<f8'), ('power', '<f8')]
-            #     )
-            #     with open(savedir, 'wb') as handle:
-            #         pickle.dump(freq_power, handle)
-                # message += " & SAVED"
 
-            # run again in vicinity of maximum power to get best-fit solution since # the ``fast`` version doesn't keep the best q and phi values
-            index = np.argmax(bls_power)
-            best_freq = freqs[index]
+            power_trend = estimate_trend(freqs, bls_power, args.oversampling)
+            top_freqs, top_power, top_index = find_top_peaks(freqs, bls_power-power_trend)
+            top_periods = 1/top_freqs
+            top_SDE = compute_SDE(
+                bls_power-power_trend, args.oversampling, peaks=top_power
+            )
+            SDE = top_SDE[0]
 
-            # best_power, ( (best_q, best_phi), ) = bls.eebls_transit_gpu(
-                # x, y, yerr, freqs=np.array([best_freq]), use_fast=False, **search_params
-                # )
+            SDE = SDE if np.isfinite(SDE) else -1
 
-            best_power, best_q, best_phi = np.ones(3)
+            if GPU:
+                _, _, sols = bls.eebls_transit_gpu(
+                    x, y, yerr, freqs=top_freqs, use_fast=False, **search_params
+                    )
+                q, phi = np.array(sols).T
+
+                # find mid-transit time
+                phi_mid = phi + 0.5 * q # phi is the phase of the start of transit
+                m = phi_mid > 1
+                phi_mid[m] -= 1
+                n_epochs = np.floor(x[0] / top_periods)
+                t0 = top_periods * (phi_mid + n_epochs)
+
+                top_solutions = dict(
+                    period=top_periods,
+                    period_err=np.array([
+                        period_uncertainty(1/freqs, bls_power-power_trend, j)
+                        for j in top_index
+                        ]),
+                    SDE=top_SDE,
+                    power=top_power,
+                    q=q,
+                    phi=phi,
+                    t0=t0,
+                    dur=top_periods * q
+                    )
+            else:
+                top_solutions = dict()
+
             message += " ----- SOLUTION COMPLETE"
-            
-            best_period = 1/best_freq
-            best_t0 = best_phi * best_period + x[0]
-            best_dur = best_period * best_q
-            period_err = period_uncertainty(1/freqs, bls_power)
-            # _, SDE, _, _ = spectra(bls_power, args.oversampling)
-            SDE=1
 
             # parameters to save
-            names = ["power", "SDE", "best_freq", "best_power", "q", "phi", "period", "period_err", "t0", "dur", "frequency_grid_args"
+            names = ["tic",
+                "periods", "power", "peaks",
+                "frequency_grid_args",
+                "teff", "logg", "rstar", "mstar", "rho", "Tmag"
                 ]
-            values = [bls_power, SDE, best_freq, best_power, best_q, best_phi,
-                    best_period, period_err, best_t0, best_dur, frequency_grid_args]
+            values = [_tic,
+                1/freqs, bls_power, top_solutions,
+                frequency_grid_args,
+                star.teff.value, star.logg.value, star.radius.value, star.mass.value, star.rho.value, star.Tmag.value
+                ]
             
+            if args.index_file is None:
+                names += ["sim", "truth"]
+                values += [_sim, truth]
+
             if args.save is not None:
-                savedir = _create_savedir(
-                    args.save, 1, _tic, _sim, _scc, prefix=f"sol_SDE={SDE:.1f}"
-                    )
-                with open(savedir, 'wb') as handle:
-                    pickle.dump(
-                        dict(
-                            zip(names, values)
-                            ), handle)
-                message += f" & SAVED" 
+                if args.index_file is None:
+                    savedir = _create_savedir_injected(
+                        args.save, 1, _tic,
+                        _sim,
+                        _scc,
+                        prefix=f"sol_SDE-{SDE:06.1f}"
+                        )
+                else:
+                    savedir = _create_savedir(
+                        args.save, 1, _tic,
+                        index_file[_tic],
+                        prefix=f"sol_SDE-{SDE:06.1f}"
+                        )
+                    
+                _create_fits_file(dict(zip(names, values)), savedir)
+                # with open(savedir, 'wb') as handle:
+                #     pickle.dump(
+                #         dict(
+                #             zip(names, values)
+                #             ), handle)
+                message += f" & SAVED"
 
             if do_logging:
-               logger.info(message) # log completion of power spectrum calculation
+                logger_log.info(message) # log completion of power spectrum calculation
+                if args.index_file is None:
+                    logger_sde.info(f"{_tic},{SDE:.2f},{_sim}")
+                else:
+                    logger_sde.info(f"{_tic},{SDE:.2f}")
+
+            success += 1
 
         except:
             if do_logging:
-                logger.exception(f"TIC {_tic:<12} ----- SEARCH FAILED")
+                logger_log.exception(f"TIC {_tic:<12} ----- SEARCH FAILED")
+                SDE = flag
+                if args.index_file is None:
+                    logger_sde.info(f"{_tic},{SDE:.0f},{_sim}")
+                else:
+                    logger_sde.info(f"{_tic},{SDE:.0f}")
+            fail += 1
             continue
 
+    time_str = str(datetime.timedelta(seconds=time.time() - start))
+    print(f"runtime: {time_str}")
+
     if do_logging:
-        logger.info("TARGETS COMPLETE")
+        logger_log.info(f"{success}/{N} TARGETS COMPLETE ({fail} FAILED) in {time_str}")
 
     # end = time.time()
     # elapsed_time = end - start
     # hours = elapsed_time // 60 // 60
     # mins = elapsed_time - hours * 60
     # secs = elapsed_time - hours * 60 - mins * 60
-    time_str = str(datetime.timedelta(seconds=time.time() - start))
-    print(f"runtime: {time_str}")
+
 
 
 

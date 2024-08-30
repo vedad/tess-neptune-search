@@ -4,6 +4,9 @@ import numpy as np
 from astropy.constants import R_sun, M_sun, G
 import astropy.units as u
 from numpy import pi, sqrt
+import warnings
+
+__all__ = ["frequency_grid"]
 
 OVERSAMPLING_FACTOR = 2
 N_TRANSITS_MIN = 2
@@ -36,42 +39,6 @@ def frequency_grid(
     """Returns array of optimal sampling periods for transit search in light curves
        Following Ofir (2014, A&A, 561, A138)"""
 
-    if R_star < 0.01:
-        text = (
-            "Warning: R_star was set to 0.01 for period_grid (was unphysical: "
-            + str(R_star)
-            + ")"
-        )
-        warnings.warn(text)
-        R_star = 0.1
-
-    if R_star > 10000:
-        text = (
-            "Warning: R_star was set to 10000 for period_grid (was unphysical: "
-            + str(R_star)
-            + ")"
-        )
-        warnings.warn(text)
-        R_star = 10000
-
-    if M_star < 0.01:
-        text = (
-            "Warning: M_star was set to 0.01 for period_grid (was unphysical: "
-            + str(M_star)
-            + ")"
-        )
-        warnings.warn(text)
-        M_star = 0.01
-
-    if M_star > 1000:
-        text = (
-            "Warning: M_star was set to 1000 for period_grid (was unphysical: "
-            + str(M_star)
-            + ")"
-        )
-        warnings.warn(text)
-        M_star = 1000
-
     R_star = R_star * R_sun.value
     M_star = M_star * M_sun.value
     # time_span = (time_span * u.day).to(u.s).value  # seconds
@@ -79,6 +46,9 @@ def frequency_grid(
     # boundary conditions
     f_min = n_transits_min / time_span
     f_max = 1.0 / (2 * pi) * sqrt(G.to("m3 / (kg d2)").value * M_star / (3 * R_star) ** 3)
+    # if 1/f_max > period_min:
+        # period_min = 1/f_max
+    # print("fmin, fmax", "pmin", "pmax", f_min, f_max, 1/f_max, 1/f_min)
 
     # optimal frequency sampling, Equations (5), (6), (7)
     A = (
@@ -99,6 +69,7 @@ def frequency_grid(
         A = A,
         C = C
     )
+    # print("Nopt, A, C", N_opt, A, C)
 
     # X = np.arange(N_opt) + 1
     # f_x = (A / 3 * X + C) ** 3
@@ -107,13 +78,27 @@ def frequency_grid(
     # Cut to given (optional) selection of periods
     # periods = (P_x * u.s).to(u.day).value
     # periods = P_x
+
+
     selected_index = np.where(
         np.logical_and(periods > period_min, periods <= period_max)
     )
+    # print("len index", len(selected_index[0]))
 
     number_of_periods = np.size(periods[selected_index])
 
-    if number_of_periods > 10 ** 6:
+    flag = 0
+
+    if number_of_periods < 1:
+        flag = -1
+        warnings.warn("no periods within constraints")
+    elif number_of_periods < MINIMUM_PERIOD_GRID_SIZE:
+        flag = -2
+        warnings.warn(
+            f"given stellar density yielded grid with too few values ({number_of_periods})"
+        )
+    elif number_of_periods > 10 ** 6:
+        flag = -3
         text = (
             "period_grid generates a very large grid ("
             + str(number_of_periods)
@@ -121,26 +106,32 @@ def frequency_grid(
         )
         warnings.warn(text)
 
-    if number_of_periods < MINIMUM_PERIOD_GRID_SIZE:
-        if time_span < 5 * 86400:
-            time_span = 5 * 86400
-        warnings.warn(
-            "period_grid defaults to R_star=1 and M_star=1 as given density yielded grid with too few values"
-        )
-        return frequency_grid(
-            R_star=1.0, M_star=1.0,
-            time_span=time_span
-            # time_span=(time_span*u.s).to(u.day).value
-        )
-    else:
-        freqs = 1/periods[selected_index]
-        freq_params["f_min"] = freqs.min()
-        freq_params["f_max"] = freqs.max()
+    if flag in [-1, -2]:
+        return None, None, flag
+        # return frequency_grid(
+        #     R_star=1.0, M_star=1.0,
+        #     time_span=time_span,
+        #     period_max=period_max,
+        #     period_min=period_min
+        #     # time_span=(time_span*u.s).to(u.day).value
+        # )
+    # else:
+    freqs = 1/periods[selected_index]
+    freq_params["f_min"] = freqs.min()
+    freq_params["f_max"] = freqs.max()
 
-        return freqs, freq_params
+    return freqs, freq_params, flag
         # return (f_x*1/u.s).to(1/u.day).value[selected_index], freq_params  # frequencies in 1/day
     
 if __name__ == "__main__":
-    f_x = frequency_grid(R_star=1, M_star=1, time_span=27)
-
-    print(len(f_x), f_x, 1/f_x[0])
+    # f_x, params = frequency_grid(R_star=1, M_star=1, time_span=27, period_max=16)
+    # f_x, params = frequency_grid(R_star=14.48, M_star=1, time_span=734, period_max=16)
+    # f_x, params = frequency_grid(R_star=4.375, M_star=1, time_span=26.68, period_max=16)
+    # f_x, params = frequency_grid(R_star=6, M_star=1, time_span=76.45, period_max=16)
+    f_x, params, flag = frequency_grid(R_star=8.63, M_star=1, time_span=761.92, period_max=16, oversampling_factor=5)
+    print(len(f_x), flag)
+    # print(len(f_x), f_x)
+    # import matplotlib.pyplot  as plt
+    # plt.plot(f_x)
+    # plt.show()
+    # print(np.diff(f_x))

@@ -10,13 +10,100 @@ from wotan import flatten
 from pathlib import Path
 
 __all__ = [
-    "LightcurveInjected", "StarInjected", "_split_injected_lightcurve", "_create_savedir"]
+    "LightcurveInjected", "StarInjected", "Star", "Lightcurve", "_split_injected_lightcurve", "_create_savedir", "_create_savedir_injected" ,"_create_padded_id", "_create_lightcurve_filenames",
+    "_create_fits_file"]
+
+def _create_fits_file(d, filename):
+
+    # create record array of data
+    recarray_data = np.rec.array(
+        [
+        d["periods"],
+        d["power"]
+        ],
+        dtype=[
+            ("periods", "<f8"),
+            ("power", "<f8")
+        ]
+    )
+
+    # create record array of solutions
+    d_peaks = d["peaks"]
+    recarray_sols = np.rec.array(
+        [
+        d_peaks["SDE"],
+        d_peaks["period"],
+        d_peaks["period_err"],
+        d_peaks["t0"],
+        d_peaks["dur"],
+        d_peaks["phi"],
+        d_peaks["q"],
+        d_peaks["power"]
+        ],
+        dtype=[
+            ("SDE", "<f8"),
+            ("period", "<f8"),
+            ("period_err", "<f8"),
+            ("t0", "<f8"),
+            ("dur", "<f8"),
+            ("phi", "<f8"),
+            ("q", "<f8"),
+            ("power", "<f8")
+        ]
+    )
+
+    # create primary header
+    hdr = fits.Header()
+    keys = ["tic", "teff", "logg", "rstar", "mstar", "rho", "Tmag"]
+    comments = ["TIC identifier", "effective temperature", "surface gravity", "radius", "mass", "density", "TESS magnitude"]
+    for key, comment in zip(keys, comments):
+        hdr[key] = (d[key], comment)
+
+    hdu_pri = fits.PrimaryHDU(header=hdr)
+
+    ## create data extension
+    hdr_data = fits.Header()
+    keys = tuple(d["frequency_grid_args"].keys())
+    comments = ("number of frequency samples", "parameter to calculate grid", "parameter to calculate grid", "minimum frequency", "maximum frequency")
+
+    for key, comment in zip(keys, comments):
+        hdr_data[key] = (d["frequency_grid_args"][key], comment)
+
+    hdu_data = fits.BinTableHDU(
+        data=recarray_data,
+        header=hdr_data,
+        name="SPECTRUM"
+    )
+
+    # create solutions extension
+    hdr_sols = fits.Header()
+
+    if "sim" in d:
+        keys = ["sim"] + list(d["truth"].keys())
+        comments = ("injection identifier", "true period", "true transit midpoint", "true transit duration", "true transit depth")
+
+        _d = {**dict(sim = d["sim"]), **d["truth"]}
+        for key, comment in zip(keys, comments):
+            hdr_sols[key] = (_d[key], comment)
+
+    hdu_sols = fits.BinTableHDU(data=recarray_sols, header=hdr_sols, name="SOLUTIONS")
+
+    hdul = fits.HDUList([hdu_pri, hdu_data, hdu_sols])
+    hdul.writeto(filename, overwrite=True)
+
+    return
+
+def _create_lightcurve_filenames(tic, sectors):
+    tic_16d = f"{int(tic):016d}"
+    prefix = "hlsp_tess-spoc_tess_phot_"
+    suffix = "_tess_v1_lc.fits"
+    return [prefix + f"{tic_16d}-s{s:04d}" + suffix for s in sectors]
 
 def _create_padded_id(input, output_length):
         # adds leading zeros to `input` until `output_lenght` is reached
         return f'{int(input):0{output_length}}'
 
-def _create_savedir(basedir, candidate, tic, sim, scc, prefix=""):
+def _create_savedir_injected(basedir, candidate, tic, sim, scc, prefix=""):
 
     tic_id = _create_padded_id(tic, 16)
     sector_string = scc.split()
@@ -27,7 +114,18 @@ def _create_savedir(basedir, candidate, tic, sim, scc, prefix=""):
 
     return Path(
         basedir, 
-        f"{prefix}_{sim}_{tic_id}.0{candidate}-{sector_string}.pickle"
+        f"{prefix}_{sim}_{tic_id}.0{candidate}_{sector_string}.fits"
+        )
+
+def _create_savedir(basedir, candidate, tic, sectors, prefix=""):
+
+    tic_id = _create_padded_id(tic, 16)
+    sector_string = [_create_padded_id(x, 2) for x in sectors]
+    sector_string = "-".join([f"s{x}" for x in sectors])
+
+    return Path(
+        basedir, 
+        f"{prefix}_{tic_id}.0{candidate}_{sector_string}.fits"
         )
 
 def _split_injected_lightcurve(filepath):
@@ -66,13 +164,40 @@ class Star:
         self.lc = lightcurves
 
         # stellar parameters
-        self.teff    = self.lc[0].header["TEFF"] * u.K
-        self.radius  = self.lc[0].header["RADIUS"] * u.R_sun
-        self.logg    = self.lc[0].header["LOGG"]
-        self.MH      = self.lc[0].header["MH"]
-        self.Tmag    = self.lc[0].header["TESSMAG"]
-        self.rho     = self._calculate_stellar_density()
-        self.mass    = self._calculate_stellar_mass()
+
+        self._validate_parameter("teff",
+                                 self.lc[0].header["TEFF"],
+                                 u.K,
+                                 default_value=-1
+        )
+        self._validate_parameter("radius",
+                                 self.lc[0].header["RADIUS"],
+                                 u.R_sun
+        )
+        self._validate_parameter("logg",
+                                 self.lc[0].header["LOGG"],
+                                 u.dimensionless_unscaled,
+                                 default_value=-1
+        )
+        self._validate_parameter("Tmag",
+                                 self.lc[0].header["TESSMAG"],
+                                 u.dimensionless_unscaled,
+                                 default_value=-1
+        )
+        if self.logg > 0:
+            self.rho = self._calculate_stellar_density()
+            self.mass = self._calculate_stellar_mass()
+        else:
+            self.mass = 1 * u.M_sun
+            self.rho = self._calculate_stellar_density_mass()
+            # self.radius = 1 * u.R_sun
+
+        self.teff = int(np.round(self.teff.value, 0)) * u.K
+        self.radius = np.round(self.radius.value, 2) * u.R_sun
+        self.mass = np.round(self.mass.value, 2) * u.M_sun
+        self.rho = np.round(self.rho.value, 2) * u.dimensionless_unscaled
+        self.logg = np.round(self.logg.value, 1) * u.dimensionless_unscaled
+        self.Tmag = np.round(self.Tmag.value, 1) * u.dimensionless_unscaled
 
         # combined data across all sectors
         self.time = [x.time for x in self.lc]
@@ -82,6 +207,16 @@ class Star:
         self.x = np.concatenate(self.time)
         self.y = np.concatenate(self.flux)
         self.y_err = np.concatenate(self.flux_err)
+
+    def _validate_parameter(self, param, value, unit, default_value=1):
+        try:
+            setattr(self, param, value * unit)
+        except TypeError:
+            setattr(self, param, default_value * unit)
+
+    def _calculate_stellar_density_mass(self):
+        V = 4 / 3 * np.pi * self.radius.to(u.cm)**3
+        return self.mass.to(u.g) / V
 
     def _calculate_stellar_density(self):
         G_cgs = G.to(u.cm**3 / (u.g * u.s**2))
@@ -108,13 +243,13 @@ class StarInjected(Star):
         self.truth = truth
 
         # stellar parameters
-        self.teff    = None
+        self.teff    = 5778 * u.K
         self.radius  = 1 * u.R_sun
-        self.logg    = None
-        self.MH      = None
-        self.Tmag    = None
-        self.rho     = None
+        self.logg    = 4.4374 * u.dimensionless_unscaled
+        self.Tmag    = -1 * u.dimensionless_unscaled
         self.mass    = 1 * u.M_sun
+        self.rho     = self._calculate_stellar_density()
+
 
         # combined data across all sectors
         self.time = [x.time for x in self.lc]
